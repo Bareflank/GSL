@@ -94,4 +94,14 @@ struct fail_fast : public std::runtime_error
 #define Expects(cond) GSL_CONTRACT_CHECK("Precondition", cond)
 #define Ensures(cond) GSL_CONTRACT_CHECK("Postcondition", cond)
 
+// ----------------------------------------------------------------------------
+// bareflank: start
+// ----------------------------------------------------------------------------
+// why uppercase?
+#define expects(cond) Expects(cond)
+#define ensures(cond) Ensures(cond)
+// ----------------------------------------------------------------------------
+// bareflank: end
+// ----------------------------------------------------------------------------
+
 #endif // GSL_CONTRACTS_H

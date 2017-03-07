@@ -25,6 +25,15 @@
 #include <type_traits>
 #include <utility>
 
+// ----------------------------------------------------------------------------
+// bareflank: start
+// ----------------------------------------------------------------------------
+// needed for GSL::finally patch
+#include <iostream>
+// ----------------------------------------------------------------------------
+// bareflank: end
+// ----------------------------------------------------------------------------
+
 #if defined(_MSC_VER)
  #pragma warning(push)
  #pragma warning(disable : 4127) // conditional expression is constant
@@ -66,7 +75,20 @@ public:
 
     ~final_act() noexcept
     {
-        if (invoke_) f_();
+// ----------------------------------------------------------------------------
+// bareflank: start
+// ----------------------------------------------------------------------------
+// we need GSL::finally to catch exceptions on destructors and keep going as
+// calling std::terminate is a bad idea in our case (will triple fault the
+// box)
+        try {
+            if (invoke_) f_();
+        } catch (std::exception &e) {
+            std::cerr << "exception thrown in ~final_act: " << e.what() << '\n';
+        }
+// ----------------------------------------------------------------------------
+// bareflank: end
+// ----------------------------------------------------------------------------
     }
 
 private:
@@ -86,6 +108,105 @@ inline final_act<F> finally(F&& f) noexcept
 {
     return final_act<F>(std::forward<F>(f));
 }
+
+// ----------------------------------------------------------------------------
+// bareflank: start
+// ----------------------------------------------------------------------------
+// proposal for on_success and on_failure
+
+// final_act_success allows you to ensure something gets run at the end of a scope on failure
+template <class F>
+class final_act_success
+{
+public:
+    explicit final_act_success(F f) noexcept : f_(std::move(f)), invoke_(true) {}
+
+    final_act_success(final_act_success&& other) noexcept : f_(std::move(other.f_)), invoke_(other.invoke_)
+    {
+        other.invoke_ = false;
+    }
+
+    final_act_success(const final_act_success&) = delete;
+    final_act_success& operator=(const final_act_success&) = delete;
+
+    ~final_act_success() noexcept
+    {
+        if (std::uncaught_exception())
+            return;
+
+        try {
+            if (invoke_) f_();
+        } catch (std::exception &e) {
+            std::cerr << "exception thrown in ~final_act_success: " << e.what() << '\n';
+        }
+    }
+
+private:
+    F f_;
+    bool invoke_;
+};
+
+// final_act_failure allows you to ensure something gets run at the end of a scope on failure
+template <class F>
+class final_act_failure
+{
+public:
+    explicit final_act_failure(F f) noexcept : f_(std::move(f)), invoke_(true) {}
+
+    final_act_failure(final_act_failure&& other) noexcept : f_(std::move(other.f_)), invoke_(other.invoke_)
+    {
+        other.invoke_ = false;
+    }
+
+    final_act_failure(const final_act_failure&) = delete;
+    final_act_failure& operator=(const final_act_failure&) = delete;
+
+    ~final_act_failure() noexcept
+    {
+        if (!std::uncaught_exception())
+            return;
+
+        try {
+            if (invoke_) f_();
+        } catch (std::exception &e) {
+            std::cerr << "exception thrown in ~final_act_failure: " << e.what() << '\n';
+        }
+    }
+
+private:
+    F f_;
+    bool invoke_;
+};
+
+// on_success() - convenience function to generate a final_act_success
+template <class F>
+inline final_act_success<F> on_success(const F& f) noexcept
+{
+    return final_act_success<F>(f);
+}
+
+template <class F>
+inline final_act_success<F> on_success(F&& f) noexcept
+{
+    return final_act_success<F>(std::forward<F>(f));
+}
+
+// on_failure() - convenience function to generate a final_act_failure
+template <class F>
+inline final_act_failure<F> on_failure(const F& f) noexcept
+{
+    return final_act_failure<F>(f);
+}
+
+template <class F>
+inline final_act_failure<F> on_failure(F&& f) noexcept
+{
+    return final_act_failure<F>(std::forward<F>(f));
+}
+
+// ----------------------------------------------------------------------------
+// bareflank: end
+// ----------------------------------------------------------------------------
 
 // narrow_cast(): a searchable way to do narrowing casts of values
 #if defined(_MSC_VER) && _MSC_VER <= 1800
@@ -129,33 +250,79 @@ inline T narrow(U u)
 //
 // at() - Bounds-checked way of accessing static arrays, std::array, std::vector
 //
-template <class T, std::size_t N>
-inline constexpr T& at(T (&arr)[N], std::ptrdiff_t index)
+
+// ----------------------------------------------------------------------------
+// bareflank: start
+// ----------------------------------------------------------------------------
+// this patch prevents the need for tons of casting because C++ is having a mid
+// life crisis with respect to std::size and std::ptrdiff_t
+
+template <class T, size_t N, class I, class = typename std::enable_if<std::is_integral<I>::value>::type>
+constexpr T& at(T (&arr)[N], I index)
 {
-    Expects(index >= 0 && index < narrow_cast<std::ptrdiff_t>(N));
-    return arr[static_cast<std::size_t>(index)];
+    Expects(index >= 0 && index < narrow_cast<I>(N));
+    return arr[static_cast<size_t>(index)];
 }
 
-template <class T, std::size_t N>
-inline constexpr T& at(std::array<T, N>& arr, std::ptrdiff_t index)
+template <class T, size_t N, class I, class = typename std::enable_if<std::is_integral<I>::value>::type>
+const constexpr T& at(const T (&arr)[N], I index)
 {
-    Expects(index >= 0 && index < narrow_cast<std::ptrdiff_t>(N));
-    return arr[static_cast<std::size_t>(index)];
+    Expects(index >= 0 && index < narrow_cast<I>(N));
+    return arr[static_cast<size_t>(index)];
 }
 
-template <class Cont>
-inline constexpr typename Cont::value_type& at(Cont& cont, std::ptrdiff_t index)
+template <class T, class I, class = typename std::enable_if<std::is_integral<I>::value>::type>
+constexpr T& at(T *arr, size_t N, I index)
 {
-    Expects(index >= 0 && index < narrow_cast<std::ptrdiff_t>(cont.size()));
+    Expects(index >= 0 && index < narrow_cast<I>(N));
+    return arr[static_cast<size_t>(index)];
+}
+
+template <class T, class I, class = typename std::enable_if<std::is_integral<I>::value>::type>
+const constexpr T& at(const T *arr, size_t N, I index)
+{
+    Expects(index >= 0 && index < narrow_cast<I>(N));
+    return arr[static_cast<size_t>(index)];
+}
+
+template <class T, size_t N, class I, class = typename std::enable_if<std::is_integral<I>::value>::type>
+constexpr T& at(std::array<T, N>& arr, I index)
+{
+    Expects(index >= 0 && index < narrow_cast<I>(N));
+    return arr[static_cast<size_t>(index)];
+}
+
+template <class T, size_t N, class I, class = typename std::enable_if<std::is_integral<I>::value>::type>
+const constexpr T& at(const std::array<T, N>& arr, I index)
+{
+    Expects(index >= 0 && index < narrow_cast<I>(N));
+    return arr[static_cast<size_t>(index)];
+}
+
+template <class Cont, class I, class = typename std::enable_if<std::is_integral<I>::value>::type>
+constexpr typename Cont::value_type& at(Cont& cont, I index)
+{
+    Expects(index >= 0 && index < narrow_cast<I>(cont.size()));
     return cont[static_cast<typename Cont::size_type>(index)];
 }
 
-template <class T>
-inline constexpr const T& at(std::initializer_list<T> cont, std::ptrdiff_t index)
+template <class Cont, class I, class = typename std::enable_if<std::is_integral<I>::value>::type>
+const constexpr typename Cont::value_type& at(const Cont& cont, I index)
 {
-    Expects(index >= 0 && index < narrow_cast<std::ptrdiff_t>(cont.size()));
+    Expects(index >= 0 && index < narrow_cast<I>(cont.size()));
+    return cont[static_cast<typename Cont::size_type>(index)];
+}
+
+template <class T, class I, class = typename std::enable_if<std::is_integral<I>::value>::type>
+constexpr const T& at(std::initializer_list<T> cont, I index)
+{
+    Expects(index >= 0 && index < narrow_cast<I>(cont.size()));
     return *(cont.begin() + index);
 }
+
+// ----------------------------------------------------------------------------
+// bareflank: end
+// ----------------------------------------------------------------------------
 
 } // namespace gsl
 

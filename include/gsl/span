@@ -505,6 +505,17 @@ public:
         return data()[idx];
     }
 
+// ----------------------------------------------------------------------------
+// bareflank: start
+// ----------------------------------------------------------------------------
+// this patch prevents the need for tons of casting because C++ is having a mid
+// life crisis with respect to std::size and std::ptrdiff_t
+    template<class T, class = typename std::enable_if<std::is_integral<T>::value>::type>
+    constexpr reference at(T idx) const { return this->operator[](narrow_cast<index_type>(idx)); }
+// ----------------------------------------------------------------------------
+// bareflank: end
+// ----------------------------------------------------------------------------
+
     constexpr reference at(index_type idx) const { return this->operator[](idx); }
     constexpr reference operator()(index_type idx) const { return this->operator[](idx); }
     constexpr pointer data() const GSL_NOEXCEPT { return storage_.data(); }
