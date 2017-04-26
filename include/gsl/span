@@ -381,6 +381,14 @@ public:
     {
     }
 
+// ----------------------------------------------------------------------------
+// bareflank: start
+// ----------------------------------------------------------------------------
+    constexpr span(std::initializer_list<std::remove_const_t<element_type>> list) : storage_(list.begin(), list.size()) {}
+// ----------------------------------------------------------------------------
+// bareflank: end
+// ----------------------------------------------------------------------------
+
     template<class ArrayElementType = std::add_pointer<element_type>>
     constexpr span(const std::unique_ptr<ArrayElementType>& ptr, index_type count) : storage_(ptr.get(), count) {}
 
